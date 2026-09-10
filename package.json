@@ -1,7 +1,7 @@
 {
   "name": "line-desktop-mcp",
-  "version": "1.1.2",
-  "description": "MCP Server for LINE Desktop Automation via GUI scripting",
+  "version": "1.2.0",
+  "description": "Community Windows LINE Desktop MCP extension with 24 opt-in tools for bounded history, search, export and guarded drafts",
   "main": "./src/server.js",
   "bin": {
     "line-desktop-mcp": "./src/server.js"
@@ -22,6 +22,10 @@
     "desktop"
   ],
   "author": "Geoffrey Wang",
+  "contributors": [{ "name": "bensonmaxai", "url": "https://github.com/bensonmaxai" }],
+  "repository": { "type": "git", "url": "git+https://github.com/bensonmaxai/line-desktop-mcp.git" },
+  "homepage": "https://github.com/bensonmaxai/line-desktop-mcp#readme",
+  "bugs": { "url": "https://github.com/bensonmaxai/line-desktop-mcp/issues" },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -47,6 +51,7 @@
   "files": [
     "src/**/*",
     "scripts/**/*",
-    "docs/windows-extensions.md"
+    "docs/**/*.md",
+    "docs/assets/*.png"
   ]
 }

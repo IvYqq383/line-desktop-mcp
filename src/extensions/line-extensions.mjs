@@ -6,7 +6,7 @@ import { LINE_CAPABILITIES, LINE_SOURCES, LINE_WORKFLOWS } from './line-capabili
 import { LineUi } from './line-ui.mjs';
 import { LineToolError, requireChat, requireText, runtimeRequire, toolResult, toolError } from './line-runtime.mjs';
 
-export const EXTENSION_VERSION = '1.0.0-experimental';
+export const EXTENSION_VERSION = '1.2.0';
 const chat = { type: 'string', minLength: 1, maxLength: 200, description: 'Exact user-authorized LINE chat name. Read only the user-requested scope.' };
 const text = { type: 'string', minLength: 1, maxLength: 10000 };
 const draft = { type: 'string', maxLength: 10000 };

@@ -13,120 +13,15 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { platform } from 'os';
-import { execSync } from 'child_process';
 import fs from 'fs';
-import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { LineAutomation } from './automation/line-automation.js';
 import { createLineExtensions } from './extensions/line-extensions.mjs';
 
-// 取得當前模組的目錄路徑
+// 取得當前模組的檔案路徑
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const packageVersion = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
-
-// 首次執行時的設定檢查
-async function firstRunSetup() {
-  const configMarker = path.join(process.env.HOME || process.env.USERPROFILE, '.line-mcp-setup-complete');
-  
-  // 如果已經設定過，跳過
-  if (fs.existsSync(configMarker)) {
-    console.error('configMarker file exists=' + configMarker);
-    return;
-  }
-
-  console.error('First-time setup...');
-
-  let allDependenciesInstalled = true;
-
-  // Windows: 檢查 AutoHotkey
-  if (platform() === 'win32') {
-    // 建立測試用的 AHK script
-    const testScriptPath = path.join(process.env.TEMP || '.', 'test-ahk-installation.ahk');
-    const testScriptContent = 'MsgBox "AutoHotkey installation detected successfully"\nExitApp()';
-    
-    try {
-      // 寫入測試 script
-      fs.writeFileSync(testScriptPath, testScriptContent);
-      
-      // 第一次嘗試執行測試 script
-      execSync(`autohotkey.exe "${testScriptPath}"`, { stdio: 'ignore', timeout: 5000 });
-      console.error('AutoHotkey found');
-      
-      // 清理測試檔案
-      if (fs.existsSync(testScriptPath)) {
-        fs.unlinkSync(testScriptPath);
-      }
-    } catch (firstError) {
-      console.error('AutoHotkey not found in PATH, attempting to setup...');
-      
-      try {
-        // 執行 setup-claude-extension.bat 來設定 PATH
-        const setupScriptPath = path.join(__dirname, '..', 'scripts', 'setup-claude-extension.bat');
-        console.error(`Running setup script: ${setupScriptPath}`);
-        execSync(`"${setupScriptPath}"`, { stdio: 'inherit' });
-        
-        // 再次嘗試執行測試 script
-        execSync(`autohotkey.exe "${testScriptPath}"`, { stdio: 'ignore', timeout: 5000 });
-        console.error('AutoHotkey found after setup');
-        
-        // 清理測試檔案
-        if (fs.existsSync(testScriptPath)) {
-          fs.unlinkSync(testScriptPath);
-        }
-      } catch (secondError) {
-        console.error('ERROR: AutoHotkey installation could not be detected.');
-        console.error('Please ensure AutoHotkey is installed and added to your system PATH.');
-        console.error('Download from: https://www.autohotkey.com/');
-        console.error(`First attempt error: ${firstError.message}`);
-        console.error(`Second attempt error: ${secondError.message}`);
-        
-        // 清理測試檔案
-        if (fs.existsSync(testScriptPath)) {
-          fs.unlinkSync(testScriptPath);
-        }
-        
-        allDependenciesInstalled = false;
-      }
-    }
-  }
-  
-  // macOS: 檢查 cliclick
-  if (platform() === 'darwin') {
-    try {
-      execSync('which cliclick', { stdio: 'ignore' });
-      console.error('cliclick found');
-    } catch (firstError) {
-      console.error('cliclick not installed, attempting to install via Homebrew...');
-      
-      try {
-        // 使用 Homebrew 安裝 cliclick (不自動更新 Homebrew)
-        console.error('Installing cliclick with: brew install cliclick');
-        execSync('brew install cliclick', { 
-          stdio: ['ignore', 'ignore', 'inherit'],
-          env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1' }
-        });
-        
-        // 驗證安裝是否成功
-        execSync('which cliclick', { stdio: 'ignore' });
-        console.error('cliclick installed successfully');
-      } catch (secondError) {
-        console.error('ERROR: Failed to install cliclick automatically.');
-        console.error('Please ensure Homebrew is installed: https://brew.sh/');
-        console.error('Then manually install cliclick with: brew install cliclick');
-        console.error(`Error: ${secondError.message}`);
-        allDependenciesInstalled = false;
-      }
-    }
-  }
-
-  // 標記為已設定
-  if (allDependenciesInstalled)
-    fs.writeFileSync(configMarker, new Date().toISOString());
-
-  console.error('Setup complete!');
-}
 
 export class LineDesktopMCPServer {
   constructor({ automation, ui, extensionsEnabled = process.env.LINE_MCP_EXTENSIONS === '1', runtimePlatform = platform() } = {}) {
@@ -636,9 +531,6 @@ function parseArgs() {
 }
 
 async function main() {
-  // 首次執行時的設定檢查
-  await firstRunSetup();
-
   // 解析命令列參數並啟動伺服器
   const config = parseArgs();
 

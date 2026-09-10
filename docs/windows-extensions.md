@@ -1,4 +1,8 @@
-# Experimental Windows extensions
+# Windows community extensions
+
+This community edition builds on the maintainer's ongoing local use of LINE history and message-sending workflows. The dated live-verification section below records the checks performed during this extension pass; an action not repeated in that pass is not a claim that the existing feature has never been used or validated.
+
+The public release is maintained at [bensonmaxai/line-desktop-mcp](https://github.com/bensonmaxai/line-desktop-mcp). Use the [Windows quickstart](quickstart-windows.md) for v1.2.0. Server startup is noninteractive: it does not install dependencies, show setup dialogs or modify the machine PATH.
 
 Set `LINE_MCP_EXTENSIONS=1` to expose the optional 24-tool Windows interface. Without this exact value, the five existing tool descriptors, their order and successful result shapes remain unchanged. macOS keeps those five tools even if the flag is set. This is a GUI bridge for an already signed-in LINE Desktop app, not the LINE Messaging API.
 
@@ -6,7 +10,7 @@ The extension replaces the five overlapping history/text handlers and adds ninet
 
 ## Setup from this source revision
 
-Use a source checkout or npm package that actually contains these changes. A pull request does not update the published npm `latest` package. Friends can use the fork's branch or, for a reproducible version, its exact commit without waiting for upstream to merge it.
+Use this fork's v1.2.0 source tag or GitHub release npm tarball. Upstream npm `latest` is maintained separately; a GitHub release or pull request does not update that registry package. Friends can install the fixed community version without waiting for the upstream PR to merge.
 
 1. Complete the project's existing Node.js, LINE Desktop and AutoHotkey v2 setup.
 2. In the checked-out revision, run `npm install --ignore-scripts`.
@@ -26,7 +30,7 @@ Metadata/workflow queries and bounded history/search/export/verification do not 
 
 CUA interoperability was exercised with Driver 0.23.2 via its public stdio `mcp` mode and live input schemas. The [public CUA Driver source and build documentation](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust) describe the separately maintained driver. A different driver must expose the same required capabilities; this project does not guarantee that a current installer provides the exact tested version. OCR is local Windows PowerShell 5.1 / Windows.Media.Ocr; installed language support and small-font recognition affect availability. The npm package includes the OCR helper. No cloud OCR or screenshot upload is used by this bridge.
 
-The current repository's `.mcpb` manifest launches the published npm `latest` through `npx`; the bundle builder also omits installed dependencies. That existing route is **not** a distribution method for this unpublished extension. Use the exact source revision/npm tarball described here; this change does not claim a new self-contained `.mcpb` release.
+The inherited `.mcpb` manifest launches upstream npm `latest` through `npx`; the bundle builder also omits installed dependencies. That route does **not** distribute this community release. Use the v1.2.0 source tag or the npm tarball from this fork's GitHub release; no new self-contained `.mcpb` release is provided.
 
 ## Tool coverage
 

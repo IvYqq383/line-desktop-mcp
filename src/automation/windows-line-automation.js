@@ -9,6 +9,219 @@ import chardet from 'chardet';
 
 const execAsync = promisify(exec);
 
+// CODEX_LINE_AHK_UTF8_DECODER_V1
+// AHK is configured to emit UTF-8-RAW. Only use charset detection after a
+// strict UTF-8 decode has proved that the output is not valid UTF-8.
+function decodeAhkOutput(bytes, streamName) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes ?? '');
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch (utf8Error) {
+    const detectedEncoding = chardet.detect(buffer);
+    if (!detectedEncoding) return buffer.toString('utf8');
+    try {
+      return iconv.decode(buffer, detectedEncoding);
+    } catch (conversionError) {
+      console.warn(`Failed to decode AHK ${streamName} as ${detectedEncoding}:`, conversionError.message);
+      return buffer.toString('utf8');
+    }
+  }
+}
+
+
+const HISTORY_AHK_GUARDS = String.raw`
+; CODEX_LINE_HISTORY_CLICK_GUARDS_V1
+CoordMode "Mouse", "Screen"
+; This is a geometric/focus guard only. It deliberately does not claim UIA
+; semantic certainty for Qt content. The history rail point is intended to avoid
+; message/image content; other LINE layouts still need live verification.
+LINE_GUARD_FAIL(code) {
+  FileAppend "ERROR: " code, "*"
+  ExitApp(1)
+}
+
+AcquireExactLineTarget() {
+  DetectHiddenWindows False
+  matches := []
+  for hwnd in WinGetList("ahk_exe LINE.exe") {
+    try {
+      if !DllCall("IsWindowVisible", "Ptr", hwnd, "Int")
+        continue
+      if (WinGetTitle("ahk_id " hwnd) != "LINE")
+        continue
+      if !RegExMatch(WinGetClass("ahk_id " hwnd), "^Qt\d+QWindowIcon$")
+        continue
+      pid := WinGetPID("ahk_id " hwnd)
+      if !pid
+        continue
+      matches.Push({ hwnd: hwnd, pid: pid })
+    } catch {
+      LINE_GUARD_FAIL("LINE_TARGET_QUERY_FAILED")
+    }
+  }
+  if (matches.Length != 1)
+    LINE_GUARD_FAIL("LINE_TARGET_NOT_UNIQUE")
+
+  target := matches[1]
+  if !DllCall("IsWindowEnabled", "Ptr", target.hwnd, "Int")
+    LINE_GUARD_FAIL("LINE_MODAL_OPEN")
+  WinActivate "ahk_id " target.hwnd
+  if !WinWaitActive("ahk_id " target.hwnd,, 2)
+    LINE_GUARD_FAIL("LINE_FOCUS_UNAVAILABLE")
+  AssertExactLineFocus(target)
+  return target
+}
+
+AssertExactLineFocus(target) {
+  active := WinExist("A")
+  if (!active || active != target.hwnd)
+    LINE_GUARD_FAIL("LINE_FOCUS_CHANGED")
+  if (WinGetPID("ahk_id " active) != target.pid)
+    LINE_GUARD_FAIL("LINE_FOCUS_CHANGED")
+}
+
+ReadCurrentLineBounds(target) {
+  AssertExactLineFocus(target)
+  WinGetPos &x, &y, &w, &h, "ahk_id " target.hwnd
+  if (w < 700 || h < 600)
+    LINE_GUARD_FAIL("LINE_BOUNDS_UNSAFE")
+  return { x: x, y: y, w: w, h: h }
+}
+
+SameBounds(left, right) {
+  return left.x = right.x && left.y = right.y && left.w = right.w && left.h = right.h
+}
+
+RelativeLinePoint(target, offsetX, offsetY) {
+  bounds := ReadCurrentLineBounds(target)
+  point := { x: bounds.x + offsetX, y: bounds.y + offsetY, bounds: bounds }
+  if (point.x <= bounds.x || point.x >= bounds.x + bounds.w - 1 || point.y <= bounds.y || point.y >= bounds.y + bounds.h - 1)
+    LINE_GUARD_FAIL("LINE_POINT_OUT_OF_BOUNDS")
+  return point
+}
+
+HistoryScrollRailPoint(target) {
+  bounds := ReadCurrentLineBounds(target)
+  ; The outer 3px edge is intentionally used instead of a guessed chat-content
+  ; point. Remaining risk: LINE layout changes can move the scroll rail.
+  point := { x: bounds.x + bounds.w - 3, y: bounds.y + Floor(bounds.h / 2), bounds: bounds }
+  if (point.x <= bounds.x || point.x >= bounds.x + bounds.w - 1 || point.y <= bounds.y || point.y >= bounds.y + bounds.h - 1)
+    LINE_GUARD_FAIL("LINE_POINT_OUT_OF_BOUNDS")
+  return point
+}
+
+GuardedLineClick(target, point) {
+  AssertExactLineFocus(target)
+  currentBounds := ReadCurrentLineBounds(target)
+  if !SameBounds(point.bounds, currentBounds)
+    LINE_GUARD_FAIL("LINE_RECT_DRIFT")
+  if (point.x < currentBounds.x || point.x >= currentBounds.x + currentBounds.w || point.y < currentBounds.y || point.y >= currentBounds.y + currentBounds.h)
+    LINE_GUARD_FAIL("LINE_POINT_OUT_OF_BOUNDS")
+
+  pointBuffer := Buffer(8, 0)
+  NumPut("Int", point.x, pointBuffer, 0)
+  NumPut("Int", point.y, pointBuffer, 4)
+  hit := DllCall("WindowFromPoint", "Int64", NumGet(pointBuffer, 0, "Int64"), "Ptr")
+  if (!hit || DllCall("GetAncestor", "Ptr", hit, "UInt", 2, "Ptr") != target.hwnd)
+    LINE_GUARD_FAIL("LINE_CLICK_TARGET_UNVERIFIED")
+  Click point.x, point.y
+}
+
+GuardedHistoryRailClick(target) {
+  GuardedLineClick(target, HistoryScrollRailPoint(target))
+}
+
+GuardedLineSend(target, keys) {
+  AssertExactLineFocus(target)
+  Send keys
+}
+`;
+
+const LINE_SEND_AHK_GUARDS = String.raw`
+; CODEX_LINE_SEND_GUARDS_V1
+; HISTORY_AHK_GUARDS supplies the exact LINE HWND/PID/focus and hit-test gates.
+; These compositor points prove bounds and LINE HWND ownership only. Qt does not
+; expose semantic composer or attachment-icon identity to this AHK path.
+
+ComposerPoint(target) {
+  bounds := ReadCurrentLineBounds(target)
+  return RelativeLinePoint(target, Floor(bounds.w * 3 / 4), bounds.h - 100)
+}
+
+AttachmentPoint(target) {
+  bounds := ReadCurrentLineBounds(target)
+  return RelativeLinePoint(target, bounds.w - 360, bounds.h - 24)
+}
+
+IsExactLineOpenDialogTitle(title) {
+  return title = "開啟" || title = "Open"
+}
+
+AssertExactLineFileDialogFocus(target, dialog) {
+  active := WinExist("A")
+  if (!active || active != dialog.hwnd)
+    LINE_GUARD_FAIL("LINE_FILE_DIALOG_FOCUS_CHANGED")
+  if (WinGetPID("ahk_id " active) != target.pid)
+    LINE_GUARD_FAIL("LINE_FILE_DIALOG_PID_CHANGED")
+  if (WinGetClass("ahk_id " active) != "#32770")
+    LINE_GUARD_FAIL("LINE_FILE_DIALOG_CLASS_CHANGED")
+  if !IsExactLineOpenDialogTitle(WinGetTitle("ahk_id " active))
+    LINE_GUARD_FAIL("LINE_FILE_DIALOG_TITLE_CHANGED")
+  if !DllCall("IsWindowEnabled", "Ptr", active, "Int")
+    LINE_GUARD_FAIL("LINE_FILE_DIALOG_DISABLED")
+}
+
+AcquireExactLineOpenDialog(target) {
+  deadline := A_TickCount + 3000
+  Loop {
+    dialogs := []
+    for hwnd in WinGetList("ahk_class #32770") {
+      try {
+        if !DllCall("IsWindowVisible", "Ptr", hwnd, "Int")
+          continue
+        if !DllCall("IsWindowEnabled", "Ptr", hwnd, "Int")
+          continue
+        if (WinGetPID("ahk_id " hwnd) != target.pid)
+          continue
+        if !IsExactLineOpenDialogTitle(WinGetTitle("ahk_id " hwnd))
+          continue
+        dialogs.Push({ hwnd: hwnd, pid: target.pid })
+      } catch {
+        LINE_GUARD_FAIL("LINE_FILE_DIALOG_QUERY_FAILED")
+      }
+    }
+    if (dialogs.Length > 1)
+      LINE_GUARD_FAIL("LINE_FILE_DIALOG_NOT_UNIQUE")
+    if (dialogs.Length = 1) {
+      dialog := dialogs[1]
+      WinActivate "ahk_id " dialog.hwnd
+      if !WinWaitActive("ahk_id " dialog.hwnd,, 2)
+        LINE_GUARD_FAIL("LINE_FILE_DIALOG_FOCUS_UNAVAILABLE")
+      AssertExactLineFileDialogFocus(target, dialog)
+      return dialog
+    }
+    if (A_TickCount >= deadline)
+      LINE_GUARD_FAIL("LINE_FILE_DIALOG_UNAVAILABLE")
+    Sleep 50
+  }
+}
+
+SetExactLineFileName(target, dialog, filePath) {
+  AssertExactLineFileDialogFocus(target, dialog)
+  try {
+    ControlFocus "Edit1", "ahk_id " dialog.hwnd
+    AssertExactLineFileDialogFocus(target, dialog)
+    ControlSetText filePath, "Edit1", "ahk_id " dialog.hwnd
+    actualPath := ControlGetText("Edit1", "ahk_id " dialog.hwnd)
+  } catch {
+    LINE_GUARD_FAIL("LINE_FILE_DIALOG_FILENAME_UNAVAILABLE")
+  }
+  if (actualPath != filePath)
+    LINE_GUARD_FAIL("LINE_FILE_DIALOG_FILENAME_MISMATCH")
+  AssertExactLineFileDialogFocus(target, dialog)
+}
+`;
+
 export class WindowsLineAutomation {
   constructor() {
     this.lineAppName = 'LINE';
@@ -34,6 +247,15 @@ SendMode "Input"
 SetWorkingDir A_ScriptDir
 CoordMode "Pixel", "Screen"
 SetTitleMatchMode 2
+; CODEX_LINE_WINDOW_READY_GATE
+; LINE.exe can be present before its exact top-level window is created.
+SetTitleMatchMode 3
+if !WinWait("LINE",, 10) {
+  FileAppend "ERROR: LINE window was not ready within 10 seconds", "*"
+  ExitApp(1)
+}
+SetTitleMatchMode 2
+FileEncoding "UTF-8-RAW"
 ${script}
 `;
     await fs.writeFile(scriptPath, fullScript);
@@ -45,42 +267,35 @@ ${script}
       });
       
       if (stderr && stderr.length > 0) {
-        // Detect and convert stderr encoding
-        const stderrEncoding = chardet.detect(stderr);
-        const stderrText = stderrEncoding ? iconv.decode(stderr, stderrEncoding) : stderr.toString('utf8');
+        const stderrText = decodeAhkOutput(stderr, 'stderr');
         console.error(`AHK Script Error: ${stderrText}`);
       }
-      
       if (!stdout || stdout.length === 0) {
         return '';
       }
-      
-      // Detect encoding of stdout
-      const detectedEncoding = chardet.detect(stdout);
-      console.error(`AHK stdout detected encoding: ${detectedEncoding}`);
-      
-      // Convert to UTF-8 string
-      let result;
-      if (detectedEncoding && detectedEncoding.toLowerCase() !== 'utf-8' && detectedEncoding.toLowerCase() !== 'utf8') {
-        try {
-          result = iconv.decode(stdout, detectedEncoding);
-          console.error(`AHK stdout converted from ${detectedEncoding} to UTF-8`);
-        } catch (conversionError) {
-          console.warn(`Failed to convert AHK stdout from ${detectedEncoding}:`, conversionError.message);
-          result = stdout.toString('utf8');
-        }
-      } else {
-        result = stdout.toString('utf8');
-        console.error('AHK stdout already in UTF-8 or ASCII');
+
+      return decodeAhkOutput(stdout, 'stdout').trim();    } catch (error) {
+      const ahkReadyErrorText = error.stdout == null
+        ? ''
+        : decodeAhkOutput(error.stdout, 'stdout').trim();      if (ahkReadyErrorText.startsWith('ERROR:')) {
+        console.error('AHK Script Error: ' + ahkReadyErrorText);
+        const ahkGuardCode = ahkReadyErrorText.match(/^ERROR:\s*(LINE_[A-Z_]+)$/)?.[1];
+        const ahkError = new Error(ahkReadyErrorText);
+        if (ahkGuardCode) ahkError.code = ahkGuardCode;
+        throw ahkError;
       }
-      
-      return result.trim();
-    } catch (error) {
       console.error(`Failed to execute AHK script: ${error.message}`);
       throw new Error(`AHK execution failed. Is AutoHotkey v2 installed and in your PATH?`);
     } finally {
       await fs.unlink(scriptPath); // Clean up the temp file
     }
+  }
+
+  escapeAhkString(value) {
+    return String(value)
+      .replace(/\`/g, '\`\`')
+      .replace(/"/g, '\`"')
+      .replace(/\r?\n/g, ' ');
   }
 
   async isLineRunning() {
@@ -95,14 +310,9 @@ ${script}
 
   async activateLine() {
     const script = `
-      SetTitleMatchMode 3
-      If WinExist("${this.lineWinTitle}") {
-        WinActivate "${this.lineWinTitle}"
-        WinWaitActive "${this.lineWinTitle}",, 2
-        ExitApp(0) ; Success
-      } else {
-        ExitApp(1) ; Failure
-      }
+      ${HISTORY_AHK_GUARDS}
+      AcquireExactLineTarget()
+      ExitApp(0)
     `;
     try {
       await this.runAhk(script);
@@ -113,32 +323,23 @@ ${script}
   }
 
   async selectChat(chatName) {
+    const safeChatName = this.escapeAhkString(chatName);
     const script = `
-      SetTitleMatchMode 3 
-      WinActivate "${this.lineWinTitle}"
-      Sleep ${this.delayShort}
-      ; Get window position and size
-      WinGetPos &winX, &winY, &winW, &winH, "${this.lineWinTitle}"
-      ; Click at position (w-20, h/2) within the window
-      CoordMode "Mouse", "Screen"
-      scale := A_ScreenDPI / 96
-      clickX := winX + 30 * scale
-      clickY := winY + 110 * scale
-      Click clickX, clickY
+      ${HISTORY_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      GuardedLineClick(target, RelativeLinePoint(target, 30, 110))
       Sleep ${this.delayMid}
-      Send "^+f" ; Ctrl+Shift+F to focus search bar
+      GuardedLineSend(target, "^+f")
       Sleep ${this.delayShort}
-      A_Clipboard := "${chatName}"
-      Send "^a" ; Select all
-      Send "{Delete}"
+      A_Clipboard := "${safeChatName}"
+      GuardedLineSend(target, "^a")
+      GuardedLineSend(target, "{Delete}")
       Sleep ${this.delayShort}
-      Send "^v" ; Paste chat name
+      GuardedLineSend(target, "^v")
       Sleep ${this.delayMid}
-      Send "{Enter}"
+      GuardedLineSend(target, "{Enter}")
       Sleep ${this.delayShort}
-      clickX := winX + 200 * scale
-      clickY := winY + 140 * scale
-      Click clickX, clickY
+      GuardedLineClick(target, RelativeLinePoint(target, 200, 140))
       Sleep ${this.delayMid}
       Return
     `;
@@ -146,6 +347,7 @@ ${script}
       await this.runAhk(script);
       return true;
     } catch (e) {
+      if (typeof e?.code === 'string' && e.code.startsWith('LINE_')) throw e;
       console.error('selectChat failed', e);
       return false;
     }
@@ -153,39 +355,32 @@ ${script}
 
   async copyAllChatToClipboard() {
     const script = `
-      SetTitleMatchMode 3
-      WinActivate "${this.lineWinTitle}"
+      ${HISTORY_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      ; Preserve the original second history focus click, but only on the
+      ; same guarded right-edge rail used by pageUp.
+      GuardedHistoryRailClick(target)
       Sleep ${this.delayShort}
-      ; Get window position and size
-      WinGetPos &winX, &winY, &winW, &winH, "${this.lineWinTitle}"
-      ; Click at position (w-20, h/2) within the window
-      CoordMode "Mouse", "Screen"
-      scale := A_ScreenDPI / 96
-      clickX := winX + winW - 20 * scale
-      clickY := winY + winH / 2
-      Click clickX, clickY
-      Sleep ${this.delayShort}
-      Send "^a" ; Ctrl+A to select all
+      GuardedLineSend(target, "^a")
       Sleep ${this.delayMid}
-      A_Clipboard := "" ; Clear clipboard
-      Send "^c" ; Ctrl+C to copy
-      ClipWait 2 ; Wait up to 2 seconds for clipboard to contain data
+      A_Clipboard := ""
+      GuardedLineSend(target, "^c")
+      ClipWait 2
       if (A_Clipboard != "") {
-        FileAppend A_Clipboard, "*" ; Write clipboard to stdout
+        FileAppend A_Clipboard, "*"
       } else {
         FileAppend "ERROR: Clipboard is empty", "*"
       }
     `;
     try {
       const result = await this.runAhk(script);
-      
       if (!result || result.startsWith('ERROR:')) {
         console.error('copyAllChatToClipboard result', result);
         return result;
       }
-
       return result;
     } catch (e) {
+      if (typeof e?.code === 'string' && e.code.startsWith('LINE_')) throw e;
       console.error('copyAllChatToClipboard failed', e);
       return null;
     }
@@ -193,29 +388,22 @@ ${script}
 
   async pageUp(times = 2) {
     const script = `
-      SetTitleMatchMode 3
-      WinActivate "${this.lineWinTitle}"
-      ; Get window position and size
-      WinGetPos &winX, &winY, &winW, &winH, "${this.lineWinTitle}"
-      ; Click at position (w-20, h/2) within the window
-      CoordMode "Mouse", "Screen"
-      scale := A_ScreenDPI / 96
-      clickX := winX + 400 * scale
-      clickY := winY + winH - 100 * scale
-      Click clickX, clickY
+      ${HISTORY_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      ; This is the single history focus click. It stays on the outer rail,
+      ; never at a guessed message/image bubble coordinate.
+      GuardedHistoryRailClick(target)
       Sleep ${this.delayShort}
-      Send "{Tab}"
-      Sleep ${this.delayShort}
-      Send "{End}"
+      GuardedLineSend(target, "{End}")
       Sleep ${this.delayShort}
       Loop ${times} {
-        Send "{PgUp}"
+        GuardedLineSend(target, "{PgUp}")
         Sleep ${this.delayShort}
       }
     `;
     await this.runAhk(script);
   }
-  
+
   async switchToEnglish() {
     // On Windows, switching input method is complex.
     // A common method is to cycle with Alt+Shift.
@@ -232,169 +420,146 @@ ${script}
     return;
   }
 
+  async stageFileManual(filePath) {
+    const safeFilePath = this.escapeAhkString(filePath);
+    const script = `
+      ${HISTORY_AHK_GUARDS}
+      ${LINE_SEND_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      ; This composited icon location has no semantic identity. GuardedLineClick
+      ; proves only current bounds and exact LINE HWND ownership.
+      GuardedLineClick(target, AttachmentPoint(target))
+      Sleep ${this.delayMidLong}
+      dialog := AcquireExactLineOpenDialog(target)
+      SetExactLineFileName(target, dialog, "${safeFilePath}")
+      Sleep ${this.delayShort}
+      ; Do not click Open or press Enter: this only stages the selected path.
+      FileAppend "READY", "*"
+    `;
+    try {
+      const result = await this.runAhk(script);
+      if (result !== 'READY') {
+        return { success: false, error: 'LINE_FILE_STAGE_UNVERIFIED: filename readback did not complete.' };
+      }
+      return { success: true, error: null };
+    } catch (e) {
+      return { success: false, error: e.message, ...(e?.code ? { code: e.code } : {}) };
+    }
+  }
+
   async sendMessage(chatName, message, autoSend = false) {
-    const messageParts = [];
-    let currentPart = '';
-
-    /*
-    const parts = message.split(/(@\S+\s)/g);
-
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      if (part.match(/^@\S+\s$/)) {
-        if (currentPart) {
-          messageParts.push(currentPart);
-          currentPart = '';
-        }
-        messageParts.push(part);
-      } else {
-        currentPart += part;
-      }
-    }
-    */
-    
-    // Use regex to split by @mentions pattern (已排除 /@ 這個格式)
-    const parts = message.split(/((?<!\/)@\S+\s)/g);
-    
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      if (part.match(/^(?<!\/)@\S+\s$/)) {
-        // If we have accumulated text before this @mention, add it as a separate part
-        if (currentPart) {
-          messageParts.push(currentPart);
-          currentPart = '';
-        }
-        // Add the @mention as its own part
-        messageParts.push(part);
-      } else {
-        // Accumulate non-@mention text
-        currentPart += part;
-      }
-    }
-
-    // Add any remaining text
-    if (currentPart) {
-      messageParts.push(currentPart);
-    }
+    const failure = (result, fallback) => ({
+      success: false,
+      error: result?.error || fallback,
+      ...(result?.code ? { code: result.code } : {}),
+    });
 
     let result = await this._sendSingleMessageInit(chatName);
+    if (result?.success !== true) return failure(result, 'LINE_SEND_INIT_FAILED');
 
-    for (const part of messageParts) {
-      if (part.match(/^@\S+\s$/)) {
-        result = await this._sendSingleMessage(chatName, ' ');
-        result = await this._sendSingleMessage(chatName, part.trim() );
-        result = await this._sendSingleMessage(chatName, 'k');
-        result = await this._sendSingleMessageBackspace();
-        //result = await this._sendSingleMessageClickMention();
+    const lines = message.split(/\r\n|\n|\r/);
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index];
+      if (line) {
+        result = await this._sendSingleMessage(chatName, line);
+        if (result?.success !== true) return failure(result, 'LINE_SEND_TEXT_FAILED');
+      }
+
+      if (index < lines.length - 1) {
         result = await this._sendShiftEnter();
-        
-      } else {
-        const lines = part.split(/\r\n|\n|\r/); // Handles Windows, Unix, and old Mac line endings
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if (line) {
-            result = await this._sendSingleMessage(chatName, line);
-          }
-
-          if (i < lines.length - 1) {
-            // Not the last line, so press Shift+Enter
-            result = await this._sendShiftEnter();
-          }
-        }
+        if (result?.success !== true) return failure(result, 'LINE_SEND_NEWLINE_FAILED');
       }
     }
 
     if (autoSend) {
       result = await this._sendSingleMessageEnter();
+      if (result?.success !== true) return failure(result, 'LINE_SEND_ENTER_FAILED');
     }
 
-    if (result.success)
-      return { success: true, error: null };
-    else
-      return { success: false, error: result.error };
+    return { success: true, error: null };
   }
 
   async _sendShiftEnter() {
     const script = `
-      WinActivate "${this.lineWinTitle}"
-      Send "+{Enter}" ; Shift+Enter for newline
+      ${HISTORY_AHK_GUARDS}
+      ${LINE_SEND_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      GuardedLineSend(target, "+{Enter}")
     `;
     try {
       await this.runAhk(script);
       return { success: true };
     } catch (e) {
-      return { success: false, error: e.message };
+      return { success: false, error: e.message, ...(e?.code ? { code: e.code } : {}) };
     }
   }
 
   async _sendSingleMessageInit(chatName) {
     const script = `
-      SetTitleMatchMode 3
-      WinActivate "${this.lineWinTitle}"
-      ; Get window position and size
-      WinGetPos &winX, &winY, &winW, &winH, "${this.lineWinTitle}"
-      ; Click at position (w-20, h/2) within the window
-      CoordMode "Mouse", "Screen"
-      scale := A_ScreenDPI / 96
-      clickX := winX + winW * (3/4)
-      clickY := winY + winH - 100 * scale
-      Click clickX, clickY
+      ${HISTORY_AHK_GUARDS}
+      ${LINE_SEND_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      ; This compositor location is guarded geometrically, not semantically.
+      GuardedLineClick(target, ComposerPoint(target))
       Sleep ${this.delayShort}
-      Send "^a"
-      Send "{Delete}"
+      GuardedLineSend(target, "^a")
+      GuardedLineSend(target, "{Delete}")
       Sleep ${this.delayLong}
     `;
     try {
       await this.runAhk(script);
       return { success: true };
     } catch (e) {
-      return { success: false, error: e.message };
+      return { success: false, error: e.message, ...(e?.code ? { code: e.code } : {}) };
     }
   }
 
   async _sendSingleMessage(chatName, message) {
+    const safeMessage = this.escapeAhkString(message);
     const script = `
-      SetTitleMatchMode 3
-      WinActivate "${this.lineWinTitle}"
-      A_Clipboard := "${message.replace(/"/g, '**')}"
-      Send "^v"
+      ${HISTORY_AHK_GUARDS}
+      ${LINE_SEND_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      A_Clipboard := "${safeMessage}"
+      GuardedLineSend(target, "^v")
       Sleep ${this.delayShort}
     `;
     try {
       await this.runAhk(script);
       return { success: true };
     } catch (e) {
-      return { success: false, error: e.message };
+      return { success: false, error: e.message, ...(e?.code ? { code: e.code } : {}) };
     }
   }
 
   async _sendSingleMessageEnter() {
     const script = `
-      SetTitleMatchMode 3
-      WinActivate "${this.lineWinTitle}"
-      Send "{Enter}"
+      ${HISTORY_AHK_GUARDS}
+      ${LINE_SEND_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      GuardedLineSend(target, "{Enter}")
     `;
     try {
       await this.runAhk(script);
       return { success: true };
     } catch (e) {
-      return { success: false, error: e.message };
+      return { success: false, error: e.message, ...(e?.code ? { code: e.code } : {}) };
     }
   }
 
   async _sendSingleMessageBackspace() {
     const script = `
-      Sleep ${this.delayMid}
-      SetTitleMatchMode 3
-      WinActivate "${this.lineWinTitle}"
-      Send "{Backspace}"
+      ${HISTORY_AHK_GUARDS}
+      ${LINE_SEND_AHK_GUARDS}
+      target := AcquireExactLineTarget()
+      GuardedLineSend(target, "{Backspace}")
       Sleep ${this.delayMidLong}
     `;
     try {
       await this.runAhk(script);
       return { success: true };
     } catch (e) {
-      return { success: false, error: e.message };
+      return { success: false, error: e.message, ...(e?.code ? { code: e.code } : {}) };
     }
   }
 

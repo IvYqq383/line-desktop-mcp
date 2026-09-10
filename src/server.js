@@ -19,10 +19,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { LineAutomation } from './automation/line-automation.js';
+import { createLineExtensions } from './extensions/line-extensions.mjs';
 
 // 取得當前模組的目錄路徑
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const packageVersion = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 // 首次執行時的設定檢查
 async function firstRunSetup() {
@@ -126,12 +128,13 @@ async function firstRunSetup() {
   console.error('Setup complete!');
 }
 
-class LineDesktopMCPServer {
-  constructor() {
+export class LineDesktopMCPServer {
+  constructor({ automation, ui, extensionsEnabled = process.env.LINE_MCP_EXTENSIONS === '1', runtimePlatform = platform() } = {}) {
+    const useExtensions = runtimePlatform === 'win32' && extensionsEnabled;
     this.server = new Server(
       {
         name: 'line-desktop-mcp',
-        version: '1.0.0',
+        version: packageVersion,
       },
       {
         capabilities: {
@@ -140,7 +143,8 @@ class LineDesktopMCPServer {
       }
     );
 
-    this.lineAutomation = new LineAutomation();
+    this.lineAutomation = automation ?? new LineAutomation();
+    this.lineExtensions = useExtensions ? createLineExtensions(this.lineAutomation, { ui }) : undefined;
     this.setupToolHandlers();
   }
 
@@ -165,6 +169,7 @@ class LineDesktopMCPServer {
               }
     */
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      if (this.lineExtensions) return { tools: this.lineExtensions.tools };
       return {
         tools: [
           {
@@ -281,6 +286,7 @@ class LineDesktopMCPServer {
       const { name, arguments: args } = request.params;
 
       try {
+        if (this.lineExtensions?.handles(name)) return await this.lineExtensions.call(name, args);
         switch (name) {
           case 'get_line_chatroom_history_default':
             return await this.handleGetLineChatroomHistoryDefault(args);
@@ -304,6 +310,17 @@ class LineDesktopMCPServer {
             );
         }
       } catch (error) {
+        if (typeof error.code === 'string' && /^(HISTORY_|LINE_)/.test(error.code)) {
+          return {
+            isError: true,
+            content: [{ type: 'text', text: JSON.stringify({
+              success: false,
+              code: error.code,
+              message: error.message,
+              operationMayHaveCompleted: error.operationMayHaveCompleted === true,
+            }) }],
+          };
+        }
         throw new McpError(
           ErrorCode.InternalError,
           `Error executing tool ${name}: ${error.message}`
@@ -486,7 +503,7 @@ class LineDesktopMCPServer {
         res.json({
           status: 'running',
           server: 'LINE Desktop MCP Server',
-          version: '1.0.0',
+          version: packageVersion,
           mcp_endpoint: endpoint,
           transport: 'Streamable HTTP (MCP 2025-06-18)'
         });
@@ -618,27 +635,34 @@ function parseArgs() {
   return config;
 }
 
-// 首次執行時的設定檢查
-await firstRunSetup();
+async function main() {
+  // 首次執行時的設定檢查
+  await firstRunSetup();
 
-// 解析命令列參數並啟動伺服器
-const config = parseArgs();
+  // 解析命令列參數並啟動伺服器
+  const config = parseArgs();
 
-// 安全檢查：非 loopback 綁定必須提供 token
-if (config.sseMode && config.host !== '127.0.0.1' && config.host !== 'localhost') {
-  if (!config.token) {
-    console.error('ERROR: Binding to a non-loopback address requires --token <secret> for authentication.');
-    console.error('  Example: npx line-desktop-mcp --http-mode --host 0.0.0.0 --port 3000 --token MY_SECRET');
-    process.exit(1);
+  // 安全檢查：非 loopback 綁定必須提供 token
+  if (config.sseMode && config.host !== '127.0.0.1' && config.host !== 'localhost') {
+    if (!config.token) {
+      console.error('ERROR: Binding to a non-loopback address requires --token <secret> for authentication.');
+      console.error('  Example: npx line-desktop-mcp --http-mode --host 0.0.0.0 --port 3000 --token MY_SECRET');
+      process.exit(1);
+    }
+  }
+
+  const server = new LineDesktopMCPServer();
+
+  if (config.sseMode) {
+    console.error(`Starting server in  Streamable HTTP  mode on ${config.host}:${config.port}`);
+    server.run(true, config.port, config.host, config.token).catch(console.error);
+  } else {
+    console.error('Starting server in stdio mode');
+    server.run(false).catch(console.error);
   }
 }
 
-const server = new LineDesktopMCPServer();
-
-if (config.sseMode) {
-  console.error(`Starting server in  Streamable HTTP  mode on ${config.host}:${config.port}`);
-  server.run(true, config.port, config.host, config.token).catch(console.error);
-} else {
-  console.error('Starting server in stdio mode');
-  server.run(false).catch(console.error);
+// Importing the server for protocol tests must never run setup or GUI input.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(__filename)) {
+  await main();
 }

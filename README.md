@@ -2,6 +2,10 @@
 
 [English](#english) | [繁體中文](#繁體中文)
 
+**Windows experimental extension:** opt in with `LINE_MCP_EXTENSIONS=1` for 24 tools covering structured history, search/export, protected drafts and guarded UI navigation. The original five-tool interface remains the default, including on macOS. See [setup, compatibility and verified limitations](docs/windows-extensions.md).
+
+**Windows 實驗性擴充：**設定 `LINE_MCP_EXTENSIONS=1` 可啟用 24 個工具，包含結構化記錄、搜尋／匯出、草稿保護與介面導覽。預設及 macOS 仍使用原本 5 個工具。進階介面功能需要另外設定相容的 CUA Driver；詳見[設定方式與實測限制](docs/windows-extensions.md)。
+
 ---
 
 ## 繁體中文

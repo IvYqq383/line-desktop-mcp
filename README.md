@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="docs/quickstart-windows.md">開始使用</a> ·
+  <a href="docs/install-and-usage-zh-TW.md">安裝與使用教學</a> ·
   <a href="https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v1.2.0">下載 v1.2.0</a> ·
   <a href="docs/features.md">功能介紹</a> ·
   <a href="docs/windows-extensions.md">工具與驗證細節</a> ·
@@ -56,7 +57,15 @@ Windows 設定 `LINE_MCP_EXTENSIONS=1` 後，可使用 **24 個工具**。預設
 
 先準備已登入的 Windows LINE Desktop、Node.js 與 AutoHotkey v2。UI 工具另需 CUA Driver；前置作業與 MCP 設定見 [Windows 安裝指南](docs/quickstart-windows.md)。
 
-使用固定版本取得程式：
+本 fork 另外提供一行安裝：下載腳本後執行，它會取得原始碼、檢查環境（Node、AutoHotkey v2、LINE）、安裝相依套件，並自動註冊偵測到的 `codex` 與 `claude` CLI。
+
+```powershell
+irm https://raw.githubusercontent.com/IvYqq383/line-desktop-mcp/main/scripts/bootstrap.ps1 -OutFile "$env:TEMP\line-mcp-bootstrap.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\line-mcp-bootstrap.ps1"
+```
+
+這個腳本只存在於本 fork，不在下方 `bensonmaxai` 的 v1.2.0 tag 中。完整步驟、能力邊界與疑難排解見 [安裝與使用教學](docs/install-and-usage-zh-TW.md)；特別注意**沒有 CUA Driver 就無法發送訊息或寫草稿**。
+
+或依上游說明使用固定版本取得程式：
 
 ```powershell
 git clone --branch v1.2.0 --depth 1 https://github.com/bensonmaxai/line-desktop-mcp.git

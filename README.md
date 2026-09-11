@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="docs/quickstart-windows.md">開始使用</a> ·
+  <a href="docs/install-and-usage-zh-TW.md">安裝與使用教學</a> ·
   <a href="https://github.com/bensonmaxai/line-desktop-mcp/releases/tag/v1.2.0">下載 v1.2.0</a> ·
   <a href="docs/features.md">功能介紹</a> ·
   <a href="docs/windows-extensions.md">工具與驗證細節</a> ·
@@ -55,6 +56,12 @@ Windows 設定 `LINE_MCP_EXTENSIONS=1` 後，可使用 **24 個工具**。預設
 ## 開始使用
 
 先準備已登入的 Windows LINE Desktop、Node.js 與 AutoHotkey v2。UI 工具另需 CUA Driver；前置作業與 MCP 設定見 [Windows 安裝指南](docs/quickstart-windows.md)。
+
+照著做就能跑完的完整版步驟、常用指令範例與疑難排解，見 [安裝與使用教學](docs/install-and-usage-zh-TW.md)。Windows 上也可以直接執行輔助腳本，它會檢查環境、安裝相依套件並產生 MCP 設定：
+
+```powershell
+.\scripts\install-windows.ps1 -Client codex
+```
 
 使用固定版本取得程式：
 
